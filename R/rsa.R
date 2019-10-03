@@ -6,9 +6,8 @@
 #' @param geno The genotypes.
 #' @param env The environments.
 #' @param rep The replications.
-#' @param data The name of the data frame containing the data.
+#' @param dfr The name of the data frame.
 #' @param maxp Maximum allowed proportion of missing values to estimate, default is 10\%.
-#' @author Raul Eyzaguirre.
 #' @details The regression stability analysis is evaluated with a balanced data set.
 #' If data is unbalanced, missing values are estimated up to an specified maximum proportion,
 #' 10\% by default. For the ANOVA table, genotypes and environments are considered as fixed
@@ -35,6 +34,7 @@
 #' \item \code{MSinter} the variance of the genotype interaction effects across environments and the
 #' environment interaction effects across genotypes.
 #' }
+#' @author Raul Eyzaguirre.
 #' @references
 #' Finlay, K. W., and Wilkinson, G. N. (1963). The Analysis of Adaption in a Plant-Breeding Programme.
 #' Aust. J. Agric. Res. 14: 742-754.
@@ -46,37 +46,33 @@
 #' @importFrom stats coef lm summary.lm
 #' @export
 
-rsa <- function(trait, geno, env, rep, data, maxp = 0.1) {
+rsa <- function(trait, geno, env, rep, dfr, maxp = 0.1) {
   
-  # Everything as factor
-  
-  data[, geno] <- factor(data[, geno])
-  data[, env] <- factor(data[, env])
-  data[, rep] <- factor(data[, rep])
-
   # Error messages
   
-  lc <- check.2f(trait, geno, env, rep, data)
+  lc <- ck.f(trait, c(geno, env), rep, dfr)
   
-  if (lc$na == 2 & lc$nb == 2)
+  if (lc$nl[1] < 3 & lc$nl[2] < 3)
     stop("You need at least 3 genotypes or 3 environments for regression stability analysis.")
 
-  # Compute ANOVA
-  
-  at <- suppressWarnings(aov.met(trait, geno, env, rep, data, maxp))
+  # Compute ANOVA and report errors from mve.met
+   
+  at <- suppressWarnings(aov.met(trait, geno, env, rep, dfr, maxp))
 
-  # Check data and estimate missing values
+  # Estimate missing values
+
+  trait.est <- paste0(trait, ".est")
   
-  if (lc$c1 == 0 | lc$c2 == 0 | lc$c3 == 0 | lc$c4 == 0) {
-    data[, trait] <- mve.met(trait, geno, env, rep, data, maxp, tol = 1e-06)[, 5]
-    warning(paste("The data set is unbalanced, ",
-                  format(lc$pmis * 100, digits = 3),
-                  "% missing values estimated.", sep = ""))
+  if (lc$nt.0 > 0 | lc$nrep == 1 | lc$nt.mult > 0 | lc$nmis > 0 | lc$nmis.fac > 0) {
+    dfr[, trait] <- mve.met(trait, geno, env, rep, dfr, maxp, tol = 1e-06)[, trait.est]
+    warning(paste0("The data set is unbalanced, ",
+                   format(lc$pmis * 100, digits = 3),
+                   "% missing values estimated."))
   }
   
   # Some statistics
 
-  int.mean <- tapply(data[, trait], list(data[, geno], data[, env]), mean, na.rm = TRUE)
+  int.mean <- tapply(dfr[, trait], list(dfr[, geno], dfr[, env]), mean, na.rm = TRUE)
   overall.mean <- mean(int.mean, na.rm = TRUE)
   env.mean <- apply(int.mean, 2, mean, na.rm = TRUE)
   geno.mean <- apply(int.mean, 1, mean, na.rm = TRUE)
@@ -91,24 +87,24 @@ rsa <- function(trait, geno, env, rep, data, maxp = 0.1) {
   MSinter <- NULL  # variance of the interaction effects
   ssr <- NULL      # residual sum of squares
 
-  for (i in 1:lc$na) {
+  for (i in 1:lc$nl[1]) {
     modelo <- lm(int.mean[i, ] ~ I(env.mean - overall.mean))
     a[i] <- coef(modelo)[1]
     b[i] <- coef(modelo)[2]
     se[i] <- summary.lm(modelo)$coefficients[2, 2]
     MSe[i] <- anova(modelo)[2, 3]
-    MSentry[i] <- sum((int.mean[i, ] - geno.mean[i])^2) / (lc$nb - 1)
-    MSinter[i] <- sum((int.mean[i, ] - geno.mean[i] - env.mean + overall.mean)^2) / (lc$nb - 1)
-    ssr[i] <- anova(modelo)[2, 2] * lc$nr
+    MSentry[i] <- sum((int.mean[i, ] - geno.mean[i])^2) / (lc$nl[2] - 1)
+    MSinter[i] <- sum((int.mean[i, ] - geno.mean[i] - env.mean + overall.mean)^2) / (lc$nl[2] - 1)
+    ssr[i] <- anova(modelo)[2, 2] * lc$nrep
   }
   stab.geno <- cbind(a, b, se, MSe, MSentry, MSinter)
   row.names(stab.geno) <- row.names(int.mean)
   
-  if (lc$nb > 2) {
+  if (lc$nl[2] > 2) {
     drg.sc <- sum(ssr)
     hrg.sc <- at[4, 2] - drg.sc
-    hrg.gl <- lc$na - 1
-    drg.gl <- (lc$na - 1) * (lc$nb - 1) - hrg.gl
+    hrg.gl <- lc$nl[1] - 1
+    drg.gl <- (lc$nl[1] - 1) * (lc$nl[2] - 1) - hrg.gl
     drg.cm <- drg.sc / drg.gl
     hrg.cm <- hrg.sc / hrg.gl
     drg.f <- drg.cm / at[5, 3]
@@ -138,24 +134,24 @@ rsa <- function(trait, geno, env, rep, data, maxp = 0.1) {
   MSinter <- NULL  # variance of the interaction effects
   ssr <- NULL      # residual sum of squares
   
-  for (i in 1:lc$nb) {
+  for (i in 1:lc$nl[2]) {
     modelo <- lm(int.mean[, i] ~ I(geno.mean - overall.mean))
     a[i] <- coef(modelo)[1]
     b[i] <- coef(modelo)[2]
     se[i] <- summary.lm(modelo)$coefficients[2, 2]
     MSe[i] <- anova(modelo)[2, 3]
-    MSentry[i] <- sum((int.mean[, i] - env.mean[i])^2) / (lc$na - 1)
-    MSinter[i] <- sum((int.mean[, i] - env.mean[i] - geno.mean + overall.mean)^2) / (lc$na - 1)
-    ssr[i] <- anova(modelo)[2, 2] * lc$nr
+    MSentry[i] <- sum((int.mean[, i] - env.mean[i])^2) / (lc$nl[1] - 1)
+    MSinter[i] <- sum((int.mean[, i] - env.mean[i] - geno.mean + overall.mean)^2) / (lc$nl[1] - 1)
+    ssr[i] <- anova(modelo)[2, 2] * lc$nrep
   }
   stab.env <- cbind(a, b, se, MSe, MSentry, MSinter)
   row.names(stab.env) <- colnames(int.mean)
 
-  if (lc$na > 2) {
+  if (lc$nl[1] > 2) {
     dre.sc <- sum(ssr)
     hre.sc <- at[4, 2] - dre.sc
-    hre.gl <- lc$nb - 1
-    dre.gl <- (lc$na - 1) * (lc$nb - 1) - hre.gl
+    hre.gl <- lc$nl[2] - 1
+    dre.gl <- (lc$nl[1] - 1) * (lc$nl[2] - 1) - hre.gl
     dre.cm <- dre.sc / dre.gl
     hre.cm <- hre.sc / hre.gl
     dre.f <- dre.cm / at[5, 3]
@@ -192,4 +188,5 @@ rsa <- function(trait, geno, env, rep, data, maxp = 0.1) {
 
   list(ANOVA = at, CV = cv, Stability_for_genotypes = stab.geno,
        Stability_for_environments = stab.env)
+  
 }

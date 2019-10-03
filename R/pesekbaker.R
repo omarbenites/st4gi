@@ -5,14 +5,13 @@
 #' @param geno The genotypes.
 #' @param env The environments.
 #' @param rep The replications.
-#' @param data The name of the data frame containing the data.
+#' @param dfr The name of the data frame.
 #' @param means The genotypic means to compute the index, \code{"single"}
 #' or \code{"fitted"}. The default is \code{"single"}. See details for more information.
 #' @param dgg Desired genetic gains. The default is one standard deviation for each trait.
 #' @param units Units for dgg, \code{"actual"} or \code{"sdu"}. See details for more information.
 #' @param sf Selected fraction. The default is 0.1.
 #' @param method The method to compute genotypic covariances. See ?ecm for details.
-#' @author Raul Eyzaguirre
 #' @details The Pesek-Baker is an index where relative economic weights have been replaced
 #' by desired gains.
 #' 
@@ -30,7 +29,6 @@
 #' then this means a desired genetic gain of 2 kilograms. If \code{dgg = NULL} then the
 #' desired genetic gains will be one standard deviation, no matter if \code{units} is set
 #' as \code{"actual"} or \code{"sdu"}.
-#' 
 #' @return It returns:
 #' \itemize{
 #' \item \code{$Desired.Genetic.Gains}, the desired genetic gains in actual units,
@@ -41,42 +39,52 @@
 #' \item \code{$Pesek.Baker.Index}, a data frame with the genotypic means for each trait,
 #' the Pesek-Baker index, and the rank for each genotype according to the index.
 #' }
+#' @author Raul Eyzaguirre.
 #' @references
 #' Pesek, J. and R.J. Baker.(1969). Desired improvement in relation to selection indices.
 #' Can. J. Plant. Sci. 9:803-804.
 #' @examples
 #' traits <- c("rytha", "bc", "dm", "star", "nocr")
 #' pesekbaker(traits, "geno", "loc", "rep", spg)
-#'
-#' ## More weight on bc and dm, less on star and nocr
+#' # More weight on bc and dm, less on star and nocr
 #' pesekbaker(traits, "geno", "loc", "rep", spg, dgg = c(1, 1.5, 1.5, 0.8, 0.8))
 #' @importFrom stats cor dnorm qnorm
 #' @export
 
-pesekbaker <- function(traits, geno, env = NULL, rep, data, means = c("single", "fitted"),
+pesekbaker <- function(traits, geno, env = NULL, rep, dfr, means = c("single", "fitted"),
                        dgg = NULL, units = c("sdu", "actual"), sf = 0.1, method = 1) {
 
   # match arguments
   
   means <- match.arg(means)
   units <- match.arg(units)
+  
+  # As character
+  
+  dfr[, geno] <- as.character(dfr[, geno])
 
   # inits
 
   nt <- length(traits) # number of traits
   rs <- NULL # response to selection
   
-  # run ecm
+  # run ecm to get covariance and correlationi matrices
   
-  cm <- ecm(traits, geno, env, rep, data, method)
+  cm <- ecm(traits, geno, env, rep, dfr, method)
+  
+  # standard deviations for traits
+  
+  sdt <- diag(cm$G.Cov)^0.5
 
   # compute index coefficients
 
   if (is.null(dgg)) {
-    dgg <- diag(cm$G.Cov)^0.5
+    dgg <- sdt
   } else {
-      if (units == "sdu") dgg <- dgg * diag(cm$G.Cov)^0.5
+    if (units == "sdu")
+      dgg <- dgg * sdt
   }
+  
   b <- solve(cm$G.Cov) %*% dgg
   dimnames(b) <- list(traits, "coef")
 
@@ -86,19 +94,19 @@ pesekbaker <- function(traits, geno, env = NULL, rep, data, means = c("single", 
   bPb <- t(b) %*% cm$P.Cov %*% b
   for (i in 1:nt)
     rs[i] <- si * t(b) %*% cm$G.Cov[, i] / sqrt(bPb * cm$G.Cov[i, i])
-  rsa <- rs * diag(cm$G.Cov)^0.5 # response to selection in actual units
+  rsa <- rs * sdt # response to selection in actual units
   names(rs) <- names(rsa)
 
   # index calculation
   
-  outind <- data.frame(geno = levels(factor(data[, geno])))
-  colnames(outind) <- geno
+  dfr.out <- data.frame(geno = unique(dfr[, geno]))
+  colnames(dfr.out) <- geno
   
   if (means == "single") {
-    temp <- docomp("mean", traits, c(geno, env), data = data)
-    temp <- docomp("mean", traits, geno, data = temp)
-    outind <- merge(outind, temp, all = TRUE)
-    colnames(outind) <- c("geno", paste("m", traits, sep = "."))
+    temp <- docomp("mean", traits, c(geno, env), dfr = dfr)
+    temp <- docomp("mean", traits, geno, dfr = temp)
+    dfr.out <- merge(dfr.out, temp, all = TRUE)
+    colnames(dfr.out) <- c("geno", paste("m", traits, sep = "."))
   }
   
   if (means == "fitted") {
@@ -106,31 +114,31 @@ pesekbaker <- function(traits, geno, env = NULL, rep, data, means = c("single", 
       if (!is.null(env)) {
         ff <- as.formula(paste(traits[i], "~", geno, "- 1 + (1|", geno, ":", env,
                                ") + (1|", env, "/", rep, ")"))
-        fm <- lme4::lmer(ff, data = data)
+        fm <- lme4::lmer(ff, dfr)
         }
       if (is.null(env)) {
         ff <- as.formula(paste(traits[i], "~", geno, "- 1 + (1|", rep, ")"))
-        fm <- lme4::lmer(ff, data = data)
+        fm <- lme4::lmer(ff, dfr)
       }
       temp <- as.data.frame(lme4::fixef(fm))
       colnames(temp) <- paste("f", traits[i], sep = ".")
       temp[, geno] <- substring(rownames(temp), nchar(geno) + 1)
-      outind <- merge(outind, temp, all = TRUE)
+      dfr.out <- merge(dfr.out, temp, all = TRUE)
     }
   }
 
-  m <- as.matrix(outind[, 2:(1 + nt)])
+  m <- as.matrix(dfr.out[, 2:(1 + nt)])
   indices <- m %*% b
-  outind <- cbind(outind, indices)
-  colnames(outind)[2 + nt] <- "PB.Index"
-  outind$PB.Rank <- rank(-outind$PB.Index, na.last = "keep")
+  dfr.out <- cbind(dfr.out, indices)
+  colnames(dfr.out)[2 + nt] <- "PB.Index"
+  dfr.out$PB.Rank <- rank(-dfr.out$PB.Index, na.last = "keep")
   
   # results
 
   list(Desired.Genetic.Gains = dgg,
-       Standard.Deviations = diag(cm$G.Cov)^0.5,
+       Standard.Deviations = sdt,
        Index.Coefficients = b,
        Response.to.Selection = rsa,
        Std.Response.to.Selection = rs,
-       Pesek.Baker.Index = outind)
+       Pesek.Baker.Index = dfr.out)
 }

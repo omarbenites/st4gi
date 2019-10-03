@@ -2,12 +2,12 @@
 % Please edit documentation in R/cdt.R
 \name{cdt}
 \alias{cdt}
-\title{Compute derived traits}
+\title{Compute derived traits for sweetpotato}
 \usage{
-cdt(fb, method = c("none", "ps", "np"), value = NULL, nops = NULL)
+cdt(dfr, method = c("none", "ps", "np"), value = NULL, nops = NULL)
 }
 \arguments{
-\item{fb}{The name of the fieldbook data frame.}
+\item{dfr}{The name of the data frame.}
 
 \item{method}{Method to scale data from plot to hectare level. Options are plot size
 \code{"ps"} and number of plants for a full hectare \code{"np"}. See details.}
@@ -21,11 +21,11 @@ and in number of plants per hectare if \code{method = "np"}.}
 It returns a data frame with the original and derived traits.
 }
 \description{
-Compute derived traits for a given fieldbook.
+Compute derived traits for a given fieldbook data frame.
 }
 \details{
 The data frame must use the labels (lower or upper case) listed in function
-\code{checknames}. See \code{?checknames} for details.
+\code{check.names.sp}. See \code{?check.names.sp} for details.
 
 Conversion from kilograms per plot to tons per hectare can be done using \code{ps}, the
 plot size, or \code{np}, the total number of plants that are expected to be allocated in a
